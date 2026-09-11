@@ -177,19 +177,22 @@ select.event-select{
   border-radius:999px; margin:10px 2px 2px;
 }
 .guest{
-  display:flex; align-items:center; gap:12px; background:var(--surface); border:1px solid var(--border);
-  border-radius:12px; padding:12px 14px; text-align:left; width:100%;
+  display:flex; align-items:center; gap:14px; background:var(--surface); border:1px solid var(--border);
+  border-radius:12px; padding:13px 16px; text-align:left; width:100%;
 }
 .guest.checked{ background:var(--good-bg); border-color:var(--accent); }
 .guest-check{
-  width:26px; height:26px; border-radius:50%; border:2px solid var(--border); flex:0 0 auto;
+  width:28px; height:28px; border-radius:50%; border:2px solid var(--border); flex:0 0 auto;
   display:flex; align-items:center; justify-content:center; color:transparent; background:var(--surface-2);
 }
 .guest.checked .guest-check{ background:var(--accent); border-color:var(--accent); color:var(--accent-contrast); }
 .guest-info{ flex:1; min-width:0; }
-.guest-name{ font-weight:700; font-size:15.5px; }
-.guest.checked .guest-name{ text-decoration:line-through; text-decoration-color:var(--accent); opacity:.7; }
-.guest-meta{ font-size:12px; color:var(--text-dim); margin-top:2px; display:flex; flex-wrap:wrap; gap:6px; }
+.guest-name{
+  display:block; font-family:'Bebas Neue',sans-serif; font-weight:400; font-size:22px; line-height:1.15;
+  letter-spacing:.02em; text-transform:uppercase; color:var(--text);
+}
+.guest.checked .guest-name{ text-decoration:line-through; text-decoration-color:var(--accent); opacity:.6; }
+.guest-meta{ font-size:12.5px; color:var(--text-dim); margin-top:3px; display:flex; flex-wrap:wrap; gap:6px; }
 .tag{ background:var(--surface-2); border-radius:6px; padding:1px 6px; }
 .empty{ text-align:center; color:rgba(255,255,255,.85); padding:40px 14px; font-size:14px; font-weight:600; }
 
@@ -375,6 +378,13 @@ select.event-select{
       <div class="card">
         <div class="row between">
           <h3 style="margin-bottom:0;">Nomes na lista (<span id="detail-guest-count">0</span>)</h3>
+          <label class="row" style="gap:6px; font-size:12px; color:var(--text-dim); font-weight:600;">
+            <input type="checkbox" id="guest-select-all">Marcar todos
+          </label>
+        </div>
+        <div class="row between" id="guest-bulk-bar" hidden style="background:var(--surface-2); border-radius:10px; padding:9px 12px; margin-top:10px;">
+          <span style="font-size:13px;"><b id="guest-bulk-count">0</b> selecionado(s)</span>
+          <button class="btn btn-danger btn-sm" id="guest-bulk-delete-btn">Excluir selecionados</button>
         </div>
         <div id="detail-guest-list"></div>
       </div>
@@ -389,7 +399,7 @@ select.event-select{
     <div id="tab-config" hidden>
       <div class="card">
         <h3>Sócios (login de administrador)</h3>
-        <div class="hint">Cada sócio tem seu próprio código pra entrar como ADM. Quem cadastrar um nome fica registrado automaticamente como responsável por aquela liberação.</div>
+        <div class="hint">Cada sócio tem seu próprio código pra entrar como ADM e cadastrar nomes. Só quem é marcado como "dono" enxerga esta aba de Ajustes e pode mudar códigos.</div>
         <div id="socios-list"></div>
         <div class="grid2" style="margin-top:14px;">
           <div class="field" style="margin-bottom:0;">
@@ -401,6 +411,10 @@ select.event-select{
             <input id="new-socio-pin" inputmode="numeric" placeholder="Ex: 4521">
           </div>
         </div>
+        <label class="row" style="gap:8px; font-size:13px; margin-top:12px; color:var(--text-dim);">
+          <input type="checkbox" id="new-socio-owner">
+          É dono — pode gerenciar sócios e o código do operador
+        </label>
         <button class="btn btn-primary" id="add-socio-btn" style="margin-top:12px;">Adicionar sócio</button>
       </div>
 
@@ -428,11 +442,11 @@ select.event-select{
 // ==========================================================================
 /* ============================================================
    COLE AQUI AS SUAS CHAVES DO FIREBASE
-   (Firebase console > Configurações do projeto > Seus apps)
-   Troque cada "COLE_AQUI" pelo valor correspondente, sem tirar as aspas.
+   (Firebase Console > Configuracoes do projeto > Seus apps > SDK setup and configuration)
+   Troque cada COLE_AQUI pelo valor correspondente do seu projeto.
    ============================================================ */
 const firebaseConfig = {
-  apiKey: "AIzaSyD5fQNxwDcnorVZWn2kIVNZ0Ccj1_vgM7Y",
+    apiKey: "AIzaSyD5fQNxwDcnorVZWn2kIVNZ0Ccj1_vgM7Y",
   authDomain: "fuga-lista.firebaseapp.com",
   projectId: "fuga-lista",
   storageBucket: "fuga-lista.firebasestorage.app",
@@ -577,6 +591,8 @@ let pins = { operatorPin: "0000" };
 let socios = []; // [{id, nome, pin}]
 let currentAdminId = null;
 let currentAdminName = null;
+let currentAdminIsOwner = false;
+let selectedGuestIds = new Set();
 let events = [];
 let pastEvents = [];
 let currentOperatorEventId = null;
@@ -631,12 +647,17 @@ function startApp() {
     socios = qs.docs.map((d) => Object.assign({ id: d.id }, d.data()));
     if (!socios.length && !socioSeedAttempted) {
       socioSeedAttempted = true;
-      addDoc(collection(fdb, "socios"), { nome: "Administrador", pin: "1234", createdAt: Date.now() }).catch(() => {});
+      addDoc(collection(fdb, "socios"), { nome: "Administrador", pin: "1234", isOwner: true, createdAt: Date.now() }).catch(() => {});
     }
     renderSocios();
     if (role === "admin" && currentAdminId) {
       const me = socios.find((s) => s.id === currentAdminId);
-      if (me) { currentAdminName = me.nome; updateAdminNameUi(); }
+      if (me) {
+        currentAdminName = me.nome;
+        const anyOwnerExists = socios.some((s) => s.isOwner);
+        currentAdminIsOwner = anyOwnerExists ? !!me.isOwner : true;
+        updateAdminNameUi();
+      }
       else { logout(); toast("Seu login de sócio foi removido."); }
     }
   }, (e) => console.warn("socios error", e));
@@ -691,6 +712,8 @@ $("pin-form").addEventListener("submit", (e) => {
     enterOperator();
   } else if (socio) {
     role = "admin"; currentAdminId = socio.id; currentAdminName = socio.nome;
+    const anyOwnerExists = socios.some((s) => s.isOwner);
+    currentAdminIsOwner = anyOwnerExists ? !!socio.isOwner : true;
     localStorage.setItem(LS_ROLE, "admin");
     localStorage.setItem(LS_ADMIN_ID, socio.id);
     enterAdmin();
@@ -718,6 +741,14 @@ function enterAdmin() {
 function updateAdminNameUi() {
   $("adm-current-name").textContent = currentAdminName ? "Logado como " + currentAdminName : "Administração";
   $("add-guest-as").textContent = currentAdminName || "—";
+  const configTab = document.querySelector('.tab[data-tab="config"]');
+  if (configTab) {
+    configTab.hidden = !currentAdminIsOwner;
+    if (!currentAdminIsOwner && configTab.classList.contains("active")) {
+      const eventosTab = document.querySelector('.tab[data-tab="eventos"]');
+      if (eventosTab) eventosTab.click();
+    }
+  }
 }
 function logout() {
   role = null; currentAdminId = null; currentAdminName = null;
@@ -890,6 +921,7 @@ function renderEventsAdmin() {
 
 function openEventDetail(eventId) {
   currentAdminEventId = eventId;
+  selectedGuestIds.clear();
   watchGuests(eventId);
   show($("tab-eventos"), false);
   show($("event-detail"), true);
@@ -900,6 +932,7 @@ function openEventDetail(eventId) {
 }
 $("back-to-events").addEventListener("click", () => {
   currentAdminEventId = null;
+  selectedGuestIds.clear();
   show($("event-detail"), false);
   show($("tab-eventos"), true);
 });
@@ -975,15 +1008,30 @@ $("bulk-add-btn").addEventListener("click", async () => {
   toast(msg);
 });
 
+function updateGuestBulkBar() {
+  const bar = $("guest-bulk-bar");
+  if (!bar) return;
+  const count = selectedGuestIds.size;
+  bar.hidden = count === 0;
+  $("guest-bulk-count").textContent = count;
+  const guests = guestsCache[currentAdminEventId] || [];
+  const selAll = $("guest-select-all");
+  if (selAll) selAll.checked = guests.length > 0 && guests.every((g) => selectedGuestIds.has(g.id));
+}
+
 function renderAdminGuestList() {
   if (!currentAdminEventId) return;
   const guests = (guestsCache[currentAdminEventId] || []).slice()
     .sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" }));
+  // limpa seleção de nomes que não existem mais na lista
+  const stillHere = new Set(guests.map((g) => g.id));
+  Array.from(selectedGuestIds).forEach((id) => { if (!stillHere.has(id)) selectedGuestIds.delete(id); });
   $("detail-guest-count").textContent = guests.length;
   const wrap = $("detail-guest-list");
-  if (!guests.length) { wrap.innerHTML = `<div class="empty">Ninguém na lista ainda.</div>`; return; }
+  if (!guests.length) { wrap.innerHTML = `<div class="empty">Ninguém na lista ainda.</div>`; updateGuestBulkBar(); return; }
   wrap.innerHTML = guests.map((g) => `
     <div class="guest-row-admin">
+      <input type="checkbox" class="guest-check-box" data-check="${g.id}" ${selectedGuestIds.has(g.id) ? "checked" : ""} style="width:18px;height:18px;flex:0 0 auto;accent-color:var(--accent);">
       <div style="min-width:0;">
         <div class="g-name">${escapeHtml(g.nome)} ${g.checkedIn ? `<span class="tag" style="color:var(--good);">entrou</span>` : ""}</div>
         <div class="g-meta">${[g.autorizadoPor && `por ${escapeHtml(g.autorizadoPor)}`, g.telefone].filter(Boolean).join(" · ")}</div>
@@ -993,6 +1041,11 @@ function renderAdminGuestList() {
       </div>
     </div>
   `).join("");
+  wrap.querySelectorAll("[data-check]").forEach((cb) => cb.addEventListener("change", () => {
+    const id = cb.dataset.check;
+    if (cb.checked) selectedGuestIds.add(id); else selectedGuestIds.delete(id);
+    updateGuestBulkBar();
+  }));
   wrap.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => {
     openModal(`
       <h3>Remover da lista?</h3>
@@ -1004,10 +1057,43 @@ function renderAdminGuestList() {
     $("cancel-del").addEventListener("click", closeModal);
     $("confirm-del").addEventListener("click", async () => {
       await deleteDoc(doc(fdb, "events", currentAdminEventId, "guests", b.dataset.del));
+      selectedGuestIds.delete(b.dataset.del);
       closeModal(); toast("Removido.");
     });
   }));
+  updateGuestBulkBar();
 }
+
+$("guest-select-all").addEventListener("change", (e) => {
+  const guests = guestsCache[currentAdminEventId] || [];
+  if (e.target.checked) guests.forEach((g) => selectedGuestIds.add(g.id));
+  else selectedGuestIds.clear();
+  renderAdminGuestList();
+});
+
+$("guest-bulk-delete-btn").addEventListener("click", () => {
+  const count = selectedGuestIds.size;
+  if (!count) return;
+  openModal(`
+    <h3>Excluir ${count} ${count > 1 ? "selecionados" : "selecionado"}?</h3>
+    <p style="color:var(--text-dim); font-size:14px;">Essa ação remove ${count > 1 ? "esses nomes" : "esse nome"} da lista. Não dá pra desfazer.</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="cancel-bulk-del">Cancelar</button>
+      <button class="btn btn-danger" id="confirm-bulk-del">Excluir ${count}</button>
+    </div>
+  `);
+  $("cancel-bulk-del").addEventListener("click", closeModal);
+  $("confirm-bulk-del").addEventListener("click", async () => {
+    const ids = Array.from(selectedGuestIds);
+    for (const id of ids) {
+      await deleteDoc(doc(fdb, "events", currentAdminEventId, "guests", id)).catch(() => {});
+    }
+    selectedGuestIds.clear();
+    updateGuestBulkBar();
+    closeModal();
+    toast(`${ids.length} removido(s).`);
+  });
+});
 
 // ---------------- ADMIN: past events ----------------
 function renderPastEvents() {
@@ -1051,7 +1137,7 @@ function renderSocios() {
   wrap.innerHTML = socios.map((s) => `
     <div class="guest-row-admin">
       <div style="min-width:0;">
-        <div class="g-name">${escapeHtml(s.nome)} ${s.id === currentAdminId ? '<span class="tag">você</span>' : ""}</div>
+        <div class="g-name">${escapeHtml(s.nome)} ${s.isOwner ? '<span class="tag" style="color:var(--accent-strong);">dono</span>' : ""} ${s.id === currentAdminId ? '<span class="tag">você</span>' : ""}</div>
         <div class="g-meta mono">código: ${escapeHtml(s.pin)}</div>
       </div>
       <div class="row-actions">
@@ -1070,16 +1156,19 @@ function codeTaken(code, ignoreSocioId) {
 }
 
 $("add-socio-btn").addEventListener("click", async () => {
+  if (!currentAdminIsOwner) { toast("Só o dono pode gerenciar sócios."); return; }
   const nome = $("new-socio-nome").value.trim();
   const pin = $("new-socio-pin").value.trim();
+  const isOwner = $("new-socio-owner").checked;
   if (!nome || !pin) { toast("Preenche nome e código."); return; }
   if (codeTaken(pin)) { toast("Esse código já está em uso."); return; }
-  await addDoc(collection(fdb, "socios"), { nome, pin, createdAt: Date.now() });
-  $("new-socio-nome").value = ""; $("new-socio-pin").value = "";
+  await addDoc(collection(fdb, "socios"), { nome, pin, isOwner, createdAt: Date.now() });
+  $("new-socio-nome").value = ""; $("new-socio-pin").value = ""; $("new-socio-owner").checked = false;
   toast("Sócio adicionado.");
 });
 
 function editSocio(id) {
+  if (!currentAdminIsOwner) { toast("Só o dono pode gerenciar sócios."); return; }
   const s = socios.find((x) => x.id === id);
   if (!s) return;
   openModal(`
@@ -1092,6 +1181,10 @@ function editSocio(id) {
       <label>Código</label>
       <input id="edit-socio-pin" inputmode="numeric" value="${escapeHtml(s.pin)}">
     </div>
+    <label class="row" style="gap:8px; font-size:14px; margin-bottom:16px;">
+      <input type="checkbox" id="edit-socio-owner" ${s.isOwner ? "checked" : ""}>
+      É dono — pode gerenciar sócios e o código do operador
+    </label>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="cancel-edit-socio">Cancelar</button>
       <button class="btn btn-primary" id="confirm-edit-socio">Salvar</button>
@@ -1101,16 +1194,26 @@ function editSocio(id) {
   $("confirm-edit-socio").addEventListener("click", async () => {
     const nome = $("edit-socio-nome").value.trim();
     const pin = $("edit-socio-pin").value.trim();
+    const isOwner = $("edit-socio-owner").checked;
     if (!nome || !pin) { toast("Preenche nome e código."); return; }
     if (codeTaken(pin, id)) { toast("Esse código já está em uso."); return; }
-    await updateDoc(doc(fdb, "socios", id), { nome, pin });
+    if (s.isOwner && !isOwner) {
+      const owners = socios.filter((x) => x.isOwner);
+      if (owners.length <= 1) { toast("Precisa deixar pelo menos um dono cadastrado."); return; }
+    }
+    await updateDoc(doc(fdb, "socios", id), { nome, pin, isOwner });
     closeModal(); toast("Sócio atualizado.");
   });
 }
 
 function deleteSocio(id) {
+  if (!currentAdminIsOwner) { toast("Só o dono pode gerenciar sócios."); return; }
   if (socios.length <= 1) { toast("Precisa deixar pelo menos um sócio cadastrado."); return; }
   const s = socios.find((x) => x.id === id);
+  if (s && s.isOwner) {
+    const owners = socios.filter((x) => x.isOwner);
+    if (owners.length <= 1) { toast("Precisa deixar pelo menos um dono cadastrado."); return; }
+  }
   openModal(`
     <h3>Remover ${escapeHtml(s ? s.nome : "sócio")}?</h3>
     <p style="color:var(--text-dim); font-size:14px;">Essa pessoa não vai mais conseguir entrar como ADM com esse código.</p>
@@ -1128,6 +1231,7 @@ function deleteSocio(id) {
 
 // ---------------- ADMIN: operator pin ----------------
 $("save-operator-pin-btn").addEventListener("click", async () => {
+  if (!currentAdminIsOwner) { toast("Só o dono pode mudar códigos."); return; }
   const o = $("cfg-operator-pin").value.trim();
   if (!o) { toast("Preenche o código."); return; }
   if (codeTaken(o)) { toast("Esse código já está em uso por um sócio."); return; }
