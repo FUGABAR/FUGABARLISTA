@@ -11,5 +11,4 @@ export const firebaseConfig = {
   storageBucket: "fuga-lista.firebasestorage.app",
   messagingSenderId: "55589507858",
   appId: "1:55589507858:web:afd282f1df0a3c45a799cb",
-  measurementId: "G-1157S5TVQ5"
 };
